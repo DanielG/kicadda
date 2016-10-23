@@ -33,6 +33,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.List
 import Data.List.Split
+import Data.Either
 import Data.Maybe
 import Data.Tuple
 import Text.Megaparsec
@@ -93,8 +94,9 @@ main = do
         Left err -> hPutStr stderr (parseErrorPretty err)
         Right (lib,sch) -> do
           let
-              comp:_ = findSchCompRef ref (sItems sch)
+              [comp] = findSchCompRef ref (sItems sch)
               Just def = find ((==scPart comp) . ldName) lib
+                     <|> find ((scPart comp `elem`) . ldAliases) lib
 
               funcalist :: [(PinId, [PinFunction])]
               funcalist =
@@ -115,22 +117,22 @@ main = do
                     concatMap (\(i,fs) -> map (flip (,) [i]) fs) $
                       funcalist
 
-          let Right src = genSolver revfuncmap (Set.fromList wanted)
+          let src = case genSolver revfuncmap (Set.fromList wanted) of
+                      Left ukn -> error $ "unknown pins: " ++ show ukn
+                      Right src -> src
+
           [sol] <- runSolver (SolverOptions False) src
 
           let pinalist :: [(PinId, PinFunction)]
               pinalist = catMaybes $ flip map sol $ \(func,MInt i) -> do
                              id' <- lookup i intToId
                              return (id', func)
-
-          let
               pos = scPos comp
               mat = scMatrixToM22 (scMatrix comp)
               rsch = extractRSch sch
               rlib = extractRLibDef def mat pos
-              RSch txts = updatePinLabels rlib rsch pinalist
-              its' = Set.toList $ Set.fromList $ sItems sch ++ map SIT txts
-          putStr $ printSchematic sch { sItems = its' }
+              RSch its txts = updatePinLabels rlib rsch (Map.fromList pinalist)
+          putStr $ printSchematic sch { sItems = its ++ map SIT txts }
 
 -- TODO: make configurable
 splitPinFunction :: PinName -> [PinFunction]
@@ -142,7 +144,7 @@ data RLibDef = RLibDef {
       rldPos    :: Map PinId (V2 Mil)  -- ^ Already transformed
     } deriving (Eq, Ord, Show)
 
-data RSch = RSch [SchText] deriving (Eq, Ord, Show)
+data RSch = RSch [SchItem] [SchText] deriving (Eq, Ord, Show)
 
 type Wanted = [PinFunction]
 
@@ -181,37 +183,28 @@ libToSchOrient 'D' = 3
 
 findSchCompRef :: Ref -> [SchItem] -> [SchComp]
 findSchCompRef ref its =
-    catMaybes $ flip map its $ \case (SIC c) -> Just c; _ -> Nothing
--- extractRComp :: SchComp -> RComp
--- extractRComp SchComp {scPart,scRef,scPos,scMatrix} =
---   RComp scRef scPart (sPosToV2 scPos) (scMatrixToM22 scMatrix)
+    catMaybes $ flip map its $ \case (SIC c) | scRef c == ref -> Just c; _ -> Nothing
 
 extractRSch :: Sch -> RSch
 extractRSch (Sch _ _ _ its) = let
-    texts = catMaybes $ flip map its $
-        \case SIT t | stType t /= "Notes" -> Just t
-              _                           -> Nothing
+    (its', texts) = partitionEithers $ flip map its $
+        \case SIT t | stType t /= "Notes" -> Right t
+              i                           -> Left i
   in
-    RSch texts
+    RSch its' texts
 
 -- | @updatePins wanted sch@ add/remove/move signal labels connected to pins
 -- of the part in 'rsch' such that all pin functions in 'wanted' are connected
 -- to a pin which provides this function and are the only label connected to
 -- this pin.
-updatePinLabels :: RLibDef -> RSch -> [(PinId, PinFunction)] -> RSch
-updatePinLabels (RLibDef part orientm posm) (RSch texts) needed = let
-    posm' = Map.restrictKeys posm (Set.fromList $ map fst needed)
-
-    matched :: Map PinId [SchText]
-    matched = Map.map (\pos -> filter (\txt -> stPos txt == pos) texts) posm'
-
-    newLabel p n o = SchText "Label" p o 50 Nothing "~" 0 n
-    new = flip Map.mapWithKey posm' $ \pid pos -> let
-              Just func = lookup pid needed
-              Just orient = Map.lookup pid orientm
-            in
-              newLabel pos func orient
+updatePinLabels :: RLibDef -> RSch -> Map PinId PinFunction -> RSch
+updatePinLabels (RLibDef _part orientm posm) (RSch oits texts) needed = let
+    (_, not_connected) =
+        partition (\a -> any (coincide a) (Map.elems posm)) texts
+    new = Map.map (\(pos, (func, orient)) -> newLabel pos func orient) $
+            Map.intersectionWith (,) posm (Map.intersectionWith (,) needed orientm)
   in
-    RSch $ (texts `diffAll` concat (Map.elems matched)) `union` Map.elems new
+    RSch oits (not_connected ++ Map.elems new)
 
-diffAll xs ys = filter (\x -> not $ x `elem` ys ) xs
+  where
+    newLabel p n o = SchText "Label" p o 50 Nothing "~" 0 n

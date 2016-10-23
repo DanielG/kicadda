@@ -44,6 +44,40 @@ instance HasRef SchComp where
 instance HasRef LibDef where
     href = ldRef
 
+class HasPos a where
+    startPos :: a -> V2 Mil
+    endPos   :: a -> V2 Mil
+instance HasPos SchComp where
+    startPos = scPos
+    endPos   = scPos
+instance HasPos SchSheet where
+    startPos = ssPos
+    endPos   = ssPos
+instance HasPos SchBitmap where
+    startPos = sbPos
+    endPos   = sbPos
+instance HasPos SchLine where
+    startPos = slStart
+    endPos   = slEnd
+instance HasPos SchEntry where
+    startPos = seStart
+    endPos   = seEnd
+instance HasPos SchMarker where
+    startPos = smPos
+    endPos   = smPos
+instance HasPos SchText where
+    startPos = stPos
+    endPos   = stPos
+
+coincide :: HasPos a => a -> V2 Mil -> Bool
+coincide a b = let
+    sa = startPos a
+    ea = endPos   a
+  in
+    or [ sa == b
+       , ea == b
+       ]
+
 data SchItem
   = SIC SchComp
   | SIS SchSheet

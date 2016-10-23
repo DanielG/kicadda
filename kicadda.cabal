@@ -22,9 +22,8 @@ executable kicadda
                      , split         >= 0.2.3.1 && < 0.3
                      , megaparsec    >= 5.1.2   && < 5.2
                      , pretty-show   >= 1.6.12  && < 1.7
-                     , haskelzinc    >= 0.2.0.3 && < 0.2
-                     , containers    >= 0.5.8.1 && < 0.6
                      , haskelzinc    >= 0.2.0.3 && < 0.3
+                     , containers    >= 0.5.8.1 && < 0.6
                      , zenc          == 0.1.1
 --                     , regex-tdfa
                      , edit-distance >= 0.2.2.1 && < 0.3
